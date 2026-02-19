@@ -4,6 +4,10 @@ import csv
 import shutil
 from datetime import date, timedelta
 
+from mutagen.mp3 import MP3
+
+PARTIAL_THRESHOLD_SECONDS = 60 * 60  # 1 hour — recordings shorter than this are flagged as Partial
+
 from config import (
     ANCHOR_LESSON_NUMBER,
     ANCHOR_LESSON_SUNDAY,
@@ -11,6 +15,12 @@ from config import (
     AUDIO_FILES_DIR,
     OUTPUT_DIR,
 )
+
+# Build absolute paths relative to this script's location
+# so the script works no matter which folder you run it from
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+AUDIO_FILES_DIR = os.path.join(SCRIPT_DIR, AUDIO_FILES_DIR)
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, OUTPUT_DIR)
 
 # The three expected meeting days per lesson week, in order
 EXPECTED_DAYS = ["Sunday", "Monday", "Tuesday"]
@@ -45,6 +55,24 @@ def parse_filename(filename):
     return date(year, month, day), code
 
 
+def get_duration_seconds(filepath):
+    """Return the duration of an MP3 file in seconds, or None if it can't be read."""
+    try:
+        audio = MP3(filepath)
+        return audio.info.length
+    except Exception:
+        return None
+
+
+def format_duration(seconds):
+    """Format a duration in seconds as h:mm:ss."""
+    seconds = int(seconds)
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    secs = seconds % 60
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
 def get_day_name(file_date):
     """Return the day of the week as a string."""
     days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -70,6 +98,8 @@ def main():
 
         lesson_num = calculate_lesson_number(file_date)
         day_name = get_day_name(file_date)
+        filepath = os.path.join(AUDIO_FILES_DIR, filename)
+        duration = get_duration_seconds(filepath)
 
         if lesson_num not in lessons:
             lessons[lesson_num] = []
@@ -79,6 +109,7 @@ def main():
             "date": file_date,
             "day": day_name,
             "code": code,
+            "duration": duration,
         })
 
     if not lessons:
@@ -93,6 +124,8 @@ def main():
         os.makedirs(folder_path, exist_ok=True)
 
         for recording in lessons[lesson_num]:
+            if recording["day"] not in EXPECTED_DAYS:
+                continue
             src = os.path.join(AUDIO_FILES_DIR, recording["filename"])
             dst = os.path.join(folder_path, recording["filename"])
             shutil.copy2(src, dst)
@@ -102,7 +135,7 @@ def main():
     report_path = os.path.join(OUTPUT_DIR, "report.csv")
     with open(report_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["Lesson", "Day", "Date", "Code", "Filename", "Status"])
+        writer.writerow(["Lesson", "Day", "Date", "Code", "Filename", "Duration", "Status"])
 
         for lesson_num in sorted(lessons.keys()):
             recordings = lessons[lesson_num]
@@ -117,9 +150,26 @@ def main():
                 expected_date = lesson_sunday + timedelta(days=i)
                 if day in days_present:
                     r = days_present[day]
-                    writer.writerow([lesson_num, day, r["date"], f"#{r['code']}", r["filename"], "Present"])
+                    duration = r["duration"]
+                    if duration is None:
+                        status = "Present (duration unknown)"
+                        duration_str = ""
+                    elif duration < PARTIAL_THRESHOLD_SECONDS:
+                        status = "Partial"
+                        duration_str = format_duration(duration)
+                    else:
+                        status = "Present"
+                        duration_str = format_duration(duration)
+                    writer.writerow([lesson_num, day, r["date"], f"#{r['code']}", r["filename"], duration_str, status])
                 else:
-                    writer.writerow([lesson_num, day, expected_date, "", "", "Missing"])
+                    writer.writerow([lesson_num, day, expected_date, "", "", "", "Missing"])
+
+            # Report recordings that fell on unexpected days (not copied to output)
+            for r in recordings:
+                if r["day"] not in EXPECTED_DAYS:
+                    duration = r["duration"]
+                    duration_str = format_duration(duration) if duration is not None else ""
+                    writer.writerow([lesson_num, r["day"], r["date"], f"#{r['code']}", r["filename"], duration_str, "Unexpected day (not copied)"])
 
     print(f"\nReport saved to: {report_path}")
     print(f"Lessons found:   {sorted(lessons.keys())}")
