@@ -79,6 +79,13 @@ def get_day_name(file_date):
     return days[file_date.weekday()]
 
 
+def is_already_processed(lesson_num, filename):
+    """Return True if this file already exists in the output lesson folder."""
+    folder_name = f"lesson_{lesson_num:02d}"
+    output_path = os.path.join(OUTPUT_DIR, folder_name, filename)
+    return os.path.exists(output_path)
+
+
 def main():
     print(f"Scanning '{AUDIO_FILES_DIR}' for {AUDIO_EXTENSION} files...\n")
 
@@ -100,6 +107,7 @@ def main():
         day_name = get_day_name(file_date)
         filepath = os.path.join(AUDIO_FILES_DIR, filename)
         duration = get_duration_seconds(filepath)
+        duplicate = is_already_processed(lesson_num, filename)
 
         if lesson_num not in lessons:
             lessons[lesson_num] = []
@@ -110,6 +118,7 @@ def main():
             "day": day_name,
             "code": code,
             "duration": duration,
+            "is_duplicate": duplicate,
         })
 
     if not lessons:
@@ -125,6 +134,9 @@ def main():
 
         for recording in lessons[lesson_num]:
             if recording["day"] not in EXPECTED_DAYS:
+                continue
+            if recording["is_duplicate"]:
+                print(f"  {recording['filename']}  ->  already processed, skipping")
                 continue
             src = os.path.join(AUDIO_FILES_DIR, recording["filename"])
             dst = os.path.join(folder_path, recording["filename"])
@@ -151,15 +163,15 @@ def main():
                 if day in days_present:
                     r = days_present[day]
                     duration = r["duration"]
-                    if duration is None:
+                    duration_str = format_duration(duration) if duration is not None else ""
+                    if r["is_duplicate"]:
+                        status = "Already processed"
+                    elif duration is None:
                         status = "Present (duration unknown)"
-                        duration_str = ""
                     elif duration < PARTIAL_THRESHOLD_SECONDS:
                         status = "Partial"
-                        duration_str = format_duration(duration)
                     else:
                         status = "Present"
-                        duration_str = format_duration(duration)
                     writer.writerow([lesson_num, day, r["date"], f"#{r['code']}", r["filename"], duration_str, status])
                 else:
                     writer.writerow([lesson_num, day, expected_date, "", "", "", "Missing"])
