@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Audio files (local only, do not sync to GitHub)
+audio_files/*
+!audio_files/.gitkeep
+
+# Output files (local only, do not sync to GitHub)
+output/*
+!output/.gitkeep
